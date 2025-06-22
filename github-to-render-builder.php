@@ -1,10 +1,3 @@
-<?php
-/*
-Plugin Name: GitHub to Render Builder
-Description: Verlinkt ein GitHub-Repo und baut es auf Render.com per API. Einfaches Build-Trigger-Plugin.
-Version: 0.1
-Author: Sven Hajer
-*/
 class GTRB_Plugin {
     private $github_client_id = 'DEINE_GITHUB_CLIENT_ID';
     private $github_client_secret = 'DEINE_GITHUB_CLIENT_SECRET';
