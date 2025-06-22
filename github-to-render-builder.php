@@ -1,8 +1,19 @@
+<?php
+/*
+Plugin Name: GitHub to Render Builder
+Description: Verlinkt GitHub Repositories per OAuth und baut sie auf Render.com per API.
+Version: 0.2
+Author: Sven Hajer
+*/
+
+if (!defined('ABSPATH')) {
+    exit; // Sicherheit: Direkter Zugriff verboten
+}
+
 class GTRB_Plugin {
     private $github_client_id = 'DEINE_GITHUB_CLIENT_ID';
     private $github_client_secret = 'DEINE_GITHUB_CLIENT_SECRET';
     private $github_token_option = 'gtrb_github_token';
-
     private $render_api_key_option = 'gtrb_render_api_key';
 
     public function __construct() {
@@ -14,18 +25,19 @@ class GTRB_Plugin {
 
     public function add_admin_menu() {
         add_menu_page(
-            'GitHub & Render Builder',
+            'GitHub to Render Builder',
             'GTRB Settings',
             'manage_options',
             'gtrb-settings',
-            [$this, 'render_settings_page']
+            [$this, 'render_settings_page'],
+            'dashicons-admin-network',
+            80
         );
     }
 
     public function render_settings_page() {
         $github_token = get_option($this->github_token_option);
         $render_api_key = get_option($this->render_api_key_option);
-
         ?>
         <div class="wrap">
             <h1>GitHub & Render.com Integration</h1>
@@ -35,23 +47,25 @@ class GTRB_Plugin {
                 <?php $auth_url = $this->get_github_oauth_url(); ?>
                 <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Mit GitHub verbinden</a>
             <?php else: ?>
-                <p>GitHub verbunden.</p>
+                <p><strong>GitHub verbunden.</strong></p>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <?php wp_nonce_field('gtrb_github_logout_nonce'); ?>
                     <input type="hidden" name="action" value="gtrb_github_logout" />
                     <input type="submit" value="Abmelden" class="button button-secondary" />
                 </form>
-                <?php $repos = $this->get_github_repos($github_token); ?>
-                <h3>Deine Repositories:</h3>
-                <?php if (is_wp_error($repos)): ?>
-                    <p>Fehler: <?php echo esc_html($repos->get_error_message()); ?></p>
-                <?php else: ?>
-                    <ul>
-                        <?php foreach ($repos as $repo): ?>
-                            <li><?php echo esc_html($repo->full_name); ?></li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
+
+                <?php
+                $repos = $this->get_github_repos($github_token);
+                if (is_wp_error($repos)) {
+                    echo '<p style="color:red;">Fehler: ' . esc_html($repos->get_error_message()) . '</p>';
+                } else {
+                    echo '<h3>Deine Repositories:</h3><ul>';
+                    foreach ($repos as $repo) {
+                        echo '<li>' . esc_html($repo->full_name) . '</li>';
+                    }
+                    echo '</ul>';
+                }
+                ?>
             <?php endif; ?>
 
             <hr>
@@ -66,13 +80,12 @@ class GTRB_Plugin {
             </form>
 
             <?php if ($render_api_key): ?>
-                <h3>Render Services:</h3>
                 <?php
                 $services = $this->get_render_services($render_api_key);
                 if (is_wp_error($services)) {
-                    echo '<p>Fehler: ' . esc_html($services->get_error_message()) . '</p>';
+                    echo '<p style="color:red;">Fehler: ' . esc_html($services->get_error_message()) . '</p>';
                 } else {
-                    echo '<ul>';
+                    echo '<h3>Render Services:</h3><ul>';
                     foreach ($services as $service) {
                         echo '<li>' . esc_html($service->name) . ' (ID: ' . esc_html($service->id) . ')</li>';
                     }
@@ -97,11 +110,15 @@ class GTRB_Plugin {
     }
 
     public function handle_github_oauth_callback() {
-        if (!isset($_GET['page']) || $_GET['page'] !== 'gtrb-settings') return;
-        if (!isset($_GET['gtrb_github_oauth'])) return;
+        if (!isset($_GET['page']) || $_GET['page'] !== 'gtrb-settings') {
+            return;
+        }
+        if (!isset($_GET['gtrb_github_oauth'])) {
+            return;
+        }
 
         if (!isset($_GET['code']) || !isset($_GET['state']) || !wp_verify_nonce($_GET['state'], 'gtrb_github_oauth_state')) {
-            wp_die('Ungültige Anfrage.');
+            wp_die('Ungültige OAuth-Anfrage.');
         }
 
         $code = sanitize_text_field($_GET['code']);
@@ -188,6 +205,6 @@ class GTRB_Plugin {
     }
 }
 
+// Plugin instanziieren und OAuth Callback registrieren
 $gtrb_plugin = new GTRB_Plugin();
-
 add_action('admin_init', [$gtrb_plugin, 'handle_github_oauth_callback']);
