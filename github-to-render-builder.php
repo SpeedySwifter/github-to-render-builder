@@ -1,8 +1,8 @@
 <?php
 /*
 Plugin Name: GitHub to Render Builder
-Description: GitHub OAuth + Render.com Integration mit auswählbaren Repositories und Services.
-Version: 0.7
+Description: GitHub OAuth + Render.com Integration mit auswählbaren Repositories und Services sowie Build-Trigger.
+Version: 0.8
 Author: Sven Hajer
 */
 
@@ -21,6 +21,7 @@ class GTRB_Plugin {
         add_action('admin_post_gtrb_save_render_api_key', [$this, 'save_render_api_key']);
         add_action('admin_post_gtrb_save_selected_services', [$this, 'save_selected_services']);
         add_action('admin_post_gtrb_save_selected_repos', [$this, 'save_selected_repos']);
+        add_action('admin_post_gtrb_trigger_builds', [$this, 'handle_trigger_builds']);
         add_action('admin_init', [$this, 'handle_github_oauth_callback']);
     }
 
@@ -48,9 +49,16 @@ class GTRB_Plugin {
         $selected_repos = get_option('gtrb_selected_github_repos', []);
         $client_id = get_option('gtrb_github_client_id');
         $client_secret = get_option('gtrb_github_client_secret');
+
         ?>
         <div class="wrap">
             <h1>GitHub & Render.com Integration</h1>
+
+            <?php
+            if (isset($_GET['build_triggered'])) {
+                echo '<div class="notice notice-success is-dismissible"><p>Builds successfully triggered for selected Render services.</p></div>';
+            }
+            ?>
 
             <h2>Getting Started: How to use this plugin</h2>
             <div style="background:#f1f1f1;padding:15px;margin-bottom:30px;border-left:4px solid #0073aa;">
@@ -82,7 +90,10 @@ class GTRB_Plugin {
                 <h3>6. Select Render Services</h3>
                 <p>Select which Render services to use for build triggers.</p>
 
-                <h3>7. Logout</h3>
+                <h3>7. Trigger Builds</h3>
+                <p>Click the button below to trigger builds for your selected Render services.</p>
+
+                <h3>8. Logout</h3>
                 <p>Use the logout button to disconnect GitHub.</p>
             </div>
 
@@ -153,13 +164,6 @@ class GTRB_Plugin {
             <hr>
 
             <h2>2. Render.com API Key</h2>
-            <p>
-              To find your Render API Key, log in to your account at  
-              <a href="https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings" target="_blank" rel="noopener noreferrer">
-                https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings
-              </a>.<br>
-              Then navigate to the <strong>API Keys</strong> section to create or copy your key.
-            </p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
                 <input type="hidden" name="action" value="gtrb_save_render_api_key" />
@@ -193,6 +197,13 @@ class GTRB_Plugin {
                         </ul>
                         <input type="submit" class="button button-primary" value="Save Selected Services" />
                     </form>
+
+                    <!-- Build trigger button -->
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:2em;">
+                        <?php wp_nonce_field('gtrb_trigger_builds_nonce'); ?>
+                        <input type="hidden" name="action" value="gtrb_trigger_builds" />
+                        <input type="submit" class="button button-primary" value="Trigger Builds for Selected Services" />
+                    </form>
                     <?php
                 }
                 ?>
@@ -225,6 +236,50 @@ class GTRB_Plugin {
             update_option('gtrb_selected_render_services', []);
         }
         wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function trigger_builds_for_selected_services() {
+        $api_key = get_option($this->render_api_key_option);
+        $selected_services = get_option('gtrb_selected_render_services', []);
+
+        if (!$api_key || empty($selected_services)) {
+            return new WP_Error('missing_data', 'Render API key or selected services missing.');
+        }
+
+        foreach ($selected_services as $service_id) {
+            $response = wp_remote_post("https://api.render.com/v1/services/{$service_id}/deploys", [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => json_encode([]),
+            ]);
+
+            if (is_wp_error($response)) {
+                return $response;
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code !== 201) { // 201 Created = success
+                return new WP_Error('render_api_error', 'Build trigger failed for service ' . $service_id);
+            }
+        }
+
+        return true;
+    }
+
+    public function handle_trigger_builds() {
+        check_admin_referer('gtrb_trigger_builds_nonce');
+
+        $result = $this->trigger_builds_for_selected_services();
+
+        if (is_wp_error($result)) {
+            wp_die('Error triggering builds: ' . $result->get_error_message());
+        }
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings&build_triggered=1'));
         exit;
     }
 
