@@ -48,7 +48,34 @@ class GTRB_Plugin {
         <div class="wrap">
             <h1>GitHub & Render.com Integration</h1>
 
-            <h2>0. GitHub OAuth App Einstellungen</h2>
+            <h2>Getting Started: How to use this plugin</h2>
+            <div style="background:#f1f1f1;padding:15px;margin-bottom:30px;border-left:4px solid #0073aa;">
+                <h3>1. Create a GitHub OAuth App</h3>
+                <p>Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener noreferrer">GitHub Developer Settings</a> and create a new OAuth App.<br>
+                Set the Redirect URL to:<br>
+                <code>https://YOUR-WP-DOMAIN/wp-admin/admin.php?page=gtrb-settings&gtrb_github_oauth=1</code><br>
+                Copy your Client ID and Client Secret.</p>
+
+                <h3>2. Enter GitHub OAuth App Credentials</h3>
+                <p>Fill in your GitHub Client ID and Client Secret below and save.</p>
+
+                <h3>3. Connect to GitHub</h3>
+                <p>Click the <strong>Connect with GitHub</strong> button to log in and authorize access.</p>
+
+                <h3>4. View Your Repositories</h3>
+                <p>After login, your GitHub repositories will be displayed.</p>
+
+                <h3>5. Enter Render.com API Key</h3>
+                <p>Enter your Render API key below to fetch your Render services.</p>
+
+                <h3>6. View Render Services</h3>
+                <p>Your Render services will be listed to use for build triggers.</p>
+
+                <h3>7. Logout</h3>
+                <p>Use the logout button to disconnect GitHub.</p>
+            </div>
+
+            <h2>0. GitHub OAuth App Settings</h2>
             <form method="post" action="options.php">
                 <?php settings_fields('gtrb_settings_group'); ?>
                 <?php do_settings_sections('gtrb_settings_group'); ?>
@@ -69,25 +96,25 @@ class GTRB_Plugin {
 
             <h2>1. GitHub Login</h2>
             <?php if (!$client_id || !$client_secret): ?>
-                <p style="color:red;">Bitte gib zuerst Client ID und Client Secret oben ein und speichere.</p>
+                <p style="color:red;">Please enter Client ID and Client Secret above and save before connecting to GitHub.</p>
             <?php else: ?>
                 <?php if (!$github_token): ?>
                     <?php $auth_url = $this->get_github_oauth_url(); ?>
-                    <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Mit GitHub verbinden</a>
+                    <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Connect with GitHub</a>
                 <?php else: ?>
-                    <p><strong>GitHub verbunden.</strong></p>
+                    <p><strong>GitHub connected.</strong></p>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                         <?php wp_nonce_field('gtrb_github_logout_nonce'); ?>
                         <input type="hidden" name="action" value="gtrb_github_logout" />
-                        <input type="submit" value="Abmelden" class="button button-secondary" />
+                        <input type="submit" value="Logout" class="button button-secondary" />
                     </form>
 
                     <?php
                     $repos = $this->get_github_repos($github_token);
                     if (is_wp_error($repos)) {
-                        echo '<p style="color:red;">Fehler: ' . esc_html($repos->get_error_message()) . '</p>';
+                        echo '<p style="color:red;">Error: ' . esc_html($repos->get_error_message()) . '</p>';
                     } else {
-                        echo '<h3>Deine Repositories:</h3><ul>';
+                        echo '<h3>Your Repositories:</h3><ul>';
                         foreach ($repos as $repo) {
                             echo '<li>' . esc_html($repo->full_name) . '</li>';
                         }
@@ -99,20 +126,20 @@ class GTRB_Plugin {
 
             <hr>
 
-            <h2>2. Render.com API-Key</h2>
+            <h2>2. Render.com API Key</h2>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
                 <input type="hidden" name="action" value="gtrb_save_render_api_key" />
-                <label for="render_api_key">API-Key:</label>
+                <label for="render_api_key">API Key:</label>
                 <input type="text" name="render_api_key" id="render_api_key" value="<?php echo esc_attr($render_api_key); ?>" class="regular-text" />
-                <input type="submit" value="Speichern" class="button button-primary" />
+                <input type="submit" value="Save" class="button button-primary" />
             </form>
 
             <?php if ($render_api_key): ?>
                 <?php
                 $services = $this->get_render_services($render_api_key);
                 if (is_wp_error($services)) {
-                    echo '<p style="color:red;">Fehler: ' . esc_html($services->get_error_message()) . '</p>';
+                    echo '<p style="color:red;">Error: ' . esc_html($services->get_error_message()) . '</p>';
                 } else {
                     echo '<h3>Render Services:</h3><ul>';
                     foreach ($services as $service) {
@@ -148,7 +175,7 @@ class GTRB_Plugin {
         }
 
         if (!isset($_GET['code']) || !isset($_GET['state']) || !wp_verify_nonce($_GET['state'], 'gtrb_github_oauth_state')) {
-            wp_die('Ungültige OAuth-Anfrage.');
+            wp_die('Invalid OAuth request.');
         }
 
         $code = sanitize_text_field($_GET['code']);
@@ -167,17 +194,17 @@ class GTRB_Plugin {
         ]);
 
         if (is_wp_error($response)) {
-            wp_die('Fehler beim Token-Abruf.');
+            wp_die('Error fetching token.');
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if (isset($body['error'])) {
-            wp_die('GitHub Fehler: ' . esc_html($body['error_description']));
+            wp_die('GitHub error: ' . esc_html($body['error_description']));
         }
 
         if (!isset($body['access_token'])) {
-            wp_die('Kein Access Token erhalten.');
+            wp_die('No access token received.');
         }
 
         update_option($this->github_token_option, sanitize_text_field($body['access_token']));
@@ -214,7 +241,7 @@ class GTRB_Plugin {
         }
         $repos = json_decode(wp_remote_retrieve_body($response));
         if (!is_array($repos)) {
-            return new WP_Error('invalid_response', 'Ungültige API Antwort.');
+            return new WP_Error('invalid_response', 'Invalid API response.');
         }
         return $repos;
     }
@@ -231,7 +258,7 @@ class GTRB_Plugin {
         }
         $services = json_decode(wp_remote_retrieve_body($response));
         if (!is_array($services)) {
-            return new WP_Error('invalid_response', 'Ungültige API Antwort von Render.');
+            return new WP_Error('invalid_response', 'Invalid API response from Render.');
         }
         return $services;
     }
