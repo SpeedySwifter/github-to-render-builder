@@ -1,8 +1,8 @@
 <?php
 /*
 Plugin Name: GitHub to Render Builder
-Description: GitHub OAuth + Render.com Integration mit auswählbaren Repositories und Services sowie Build-Trigger.
-Version: 0.8
+Description: GitHub OAuth + Render.com Integration mit auswählbaren Repositories, Services und iframe-Integration.
+Version: 0.9
 Author: Sven Hajer
 */
 
@@ -23,6 +23,9 @@ class GTRB_Plugin {
         add_action('admin_post_gtrb_save_selected_repos', [$this, 'save_selected_repos']);
         add_action('admin_post_gtrb_trigger_builds', [$this, 'handle_trigger_builds']);
         add_action('admin_init', [$this, 'handle_github_oauth_callback']);
+
+        // Shortcode für iframe-Integration
+        add_shortcode('render_site', [$this, 'render_iframe_shortcode']);
     }
 
     public function add_admin_menu() {
@@ -93,8 +96,10 @@ class GTRB_Plugin {
                 <h3>7. Trigger Builds</h3>
                 <p>Click the button below to trigger builds for your selected Render services.</p>
 
-                <h3>8. Logout</h3>
-                <p>Use the logout button to disconnect GitHub.</p>
+                <h3>8. View and embed your Render sites</h3>
+                <p>After selecting services, you can view their URLs below and embed any Render site into your WordPress posts or pages using the shortcode:</p>
+                <pre>[render_site service_url="SERVICE_URL_HERE"]</pre>
+                <p>Replace <code>SERVICE_URL_HERE</code> with the URL shown below for the service you want to embed.</p>
             </div>
 
             <h2>0. GitHub OAuth App Settings</h2>
@@ -190,7 +195,10 @@ class GTRB_Plugin {
                                 <li>
                                     <label>
                                         <input type="checkbox" name="selected_services[]" value="<?php echo esc_attr($service->id); ?>" <?php echo $checked; ?> />
-                                        <?php echo esc_html($service->name); ?>
+                                        <?php echo esc_html($service->name); ?> — 
+                                        <a href="<?php echo esc_url($service->url); ?>" target="_blank" rel="noopener noreferrer">
+                                            <?php echo esc_html($service->url); ?>
+                                        </a>
                                     </label>
                                 </li>
                             <?php endforeach; ?>
@@ -211,6 +219,25 @@ class GTRB_Plugin {
 
         </div>
         <?php
+    }
+
+    public function render_iframe_shortcode($atts) {
+        $atts = shortcode_atts([
+            'service_url' => '',
+            'width' => '100%',
+            'height' => '800px',
+        ], $atts, 'render_site');
+
+        if (empty($atts['service_url'])) {
+            return 'Render service URL not specified.';
+        }
+
+        return sprintf(
+            '<iframe src="%s" width="%s" height="%s" style="border:none;"></iframe>',
+            esc_url($atts['service_url']),
+            esc_attr($atts['width']),
+            esc_attr($atts['height'])
+        );
     }
 
     public function save_selected_repos() {
