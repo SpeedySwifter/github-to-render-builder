@@ -5,101 +5,196 @@ Description: Verlinkt ein GitHub-Repo und baut es auf Render.com per API. Einfac
 Version: 0.1
 Author: Sven Hajer
 */
+class GTRB_Plugin {
+    private $github_client_id = 'DEINE_GITHUB_CLIENT_ID';
+    private $github_client_secret = 'DEINE_GITHUB_CLIENT_SECRET';
+    private $github_token_option = 'gtrb_github_token';
 
-// Admin Menü hinzufügen
-add_action('admin_menu', function() {
-    add_options_page('GitHub Render Builder', 'GitHub Render Builder', 'manage_options', 'github-render-builder', 'gtrb_admin_page');
-});
+    private $render_api_key_option = 'gtrb_render_api_key';
 
-// Plugin-Einstellungen registrieren
-add_action('admin_init', function() {
-    register_setting('gtrb_settings', 'gtrb_github_repo');
-    register_setting('gtrb_settings', 'gtrb_render_api_key');
-    register_setting('gtrb_settings', 'gtrb_last_build_status');
-});
-
-// Admin Seite HTML
-function gtrb_admin_page() {
-    if (!current_user_can('manage_options')) {
-        return;
+    public function __construct() {
+        add_action('admin_menu', [$this, 'add_admin_menu']);
+        add_action('admin_post_gtrb_github_logout', [$this, 'github_logout']);
+        add_action('admin_post_gtrb_save_render_api_key', [$this, 'save_render_api_key']);
+        add_action('admin_init', [$this, 'handle_github_oauth_callback']);
     }
 
-    // Handle Build Trigger
-    if (isset($_POST['gtrb_trigger_build'])) {
-        check_admin_referer('gtrb_build_nonce');
+    public function add_admin_menu() {
+        add_menu_page(
+            'GitHub & Render Builder',
+            'GTRB Settings',
+            'manage_options',
+            'gtrb-settings',
+            [$this, 'render_settings_page']
+        );
+    }
 
-        $repo = get_option('gtrb_github_repo');
-        $api_key = get_option('gtrb_render_api_key');
+    public function render_settings_page() {
+        $github_token = get_option($this->github_token_option);
+        $render_api_key = get_option($this->render_api_key_option);
 
-        if (!$repo || !$api_key) {
-            echo '<div class="notice notice-error"><p>Bitte GitHub Repo und Render API-Key eintragen!</p></div>';
-        } else {
-            $result = gtrb_trigger_render_build($repo, $api_key);
-            if (is_wp_error($result)) {
-                echo '<div class="notice notice-error"><p>Build fehlgeschlagen: ' . esc_html($result->get_error_message()) . '</p></div>';
-            } else {
-                update_option('gtrb_last_build_status', 'Build gestartet um '.date('Y-m-d H:i:s'));
-                echo '<div class="notice notice-success"><p>Build erfolgreich gestartet!</p></div>';
-            }
+        ?>
+        <div class="wrap">
+            <h1>GitHub & Render.com Integration</h1>
+
+            <h2>1. GitHub Login</h2>
+            <?php if (!$github_token): ?>
+                <?php $auth_url = $this->get_github_oauth_url(); ?>
+                <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Mit GitHub verbinden</a>
+            <?php else: ?>
+                <p>GitHub verbunden.</p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('gtrb_github_logout_nonce'); ?>
+                    <input type="hidden" name="action" value="gtrb_github_logout" />
+                    <input type="submit" value="Abmelden" class="button button-secondary" />
+                </form>
+                <?php $repos = $this->get_github_repos($github_token); ?>
+                <h3>Deine Repositories:</h3>
+                <?php if (is_wp_error($repos)): ?>
+                    <p>Fehler: <?php echo esc_html($repos->get_error_message()); ?></p>
+                <?php else: ?>
+                    <ul>
+                        <?php foreach ($repos as $repo): ?>
+                            <li><?php echo esc_html($repo->full_name); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <hr>
+
+            <h2>2. Render.com API-Key</h2>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
+                <input type="hidden" name="action" value="gtrb_save_render_api_key" />
+                <label for="render_api_key">API-Key:</label>
+                <input type="text" name="render_api_key" id="render_api_key" value="<?php echo esc_attr($render_api_key); ?>" class="regular-text" />
+                <input type="submit" value="Speichern" class="button button-primary" />
+            </form>
+
+            <?php if ($render_api_key): ?>
+                <h3>Render Services:</h3>
+                <?php
+                $services = $this->get_render_services($render_api_key);
+                if (is_wp_error($services)) {
+                    echo '<p>Fehler: ' . esc_html($services->get_error_message()) . '</p>';
+                } else {
+                    echo '<ul>';
+                    foreach ($services as $service) {
+                        echo '<li>' . esc_html($service->name) . ' (ID: ' . esc_html($service->id) . ')</li>';
+                    }
+                    echo '</ul>';
+                }
+                ?>
+            <?php endif; ?>
+
+        </div>
+        <?php
+    }
+
+    public function get_github_oauth_url() {
+        $redirect_uri = admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1');
+        $params = [
+            'client_id' => $this->github_client_id,
+            'redirect_uri' => $redirect_uri,
+            'scope' => 'repo',
+            'state' => wp_create_nonce('gtrb_github_oauth_state'),
+        ];
+        return 'https://github.com/login/oauth/authorize?' . http_build_query($params);
+    }
+
+    public function handle_github_oauth_callback() {
+        if (!isset($_GET['page']) || $_GET['page'] !== 'gtrb-settings') return;
+        if (!isset($_GET['gtrb_github_oauth'])) return;
+
+        if (!isset($_GET['code']) || !isset($_GET['state']) || !wp_verify_nonce($_GET['state'], 'gtrb_github_oauth_state')) {
+            wp_die('Ungültige Anfrage.');
         }
+
+        $code = sanitize_text_field($_GET['code']);
+
+        $response = wp_remote_post('https://github.com/login/oauth/access_token', [
+            'headers' => ['Accept' => 'application/json'],
+            'body' => [
+                'client_id' => $this->github_client_id,
+                'client_secret' => $this->github_client_secret,
+                'code' => $code,
+                'redirect_uri' => admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1'),
+                'state' => $_GET['state'],
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die('Fehler beim Token-Abruf.');
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (isset($body['error'])) {
+            wp_die('GitHub Fehler: ' . esc_html($body['error_description']));
+        }
+
+        if (!isset($body['access_token'])) {
+            wp_die('Kein Access Token erhalten.');
+        }
+
+        update_option($this->github_token_option, sanitize_text_field($body['access_token']));
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
     }
 
-    // Formular
-    ?>
-    <div class="wrap">
-        <h1>GitHub to Render Builder</h1>
-        <form method="post" action="">
-            <?php settings_fields('gtrb_settings'); ?>
-            <table class="form-table">
-                <tr valign="top">
-                    <th scope="row">GitHub Repo URL</th>
-                    <td><input type="text" name="gtrb_github_repo" value="<?php echo esc_attr(get_option('gtrb_github_repo')); ?>" class="regular-text" placeholder="https://github.com/user/repo" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Render API Key</th>
-                    <td><input type="password" name="gtrb_render_api_key" value="<?php echo esc_attr(get_option('gtrb_render_api_key')); ?>" class="regular-text" /></td>
-                </tr>
-            </table>
-            <?php submit_button('Speichern'); ?>
-        </form>
+    public function github_logout() {
+        check_admin_referer('gtrb_github_logout_nonce');
+        delete_option($this->github_token_option);
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
 
-        <h2>Build starten</h2>
-        <form method="post" action="">
-            <?php wp_nonce_field('gtrb_build_nonce'); ?>
-            <input type="hidden" name="gtrb_trigger_build" value="1" />
-            <?php submit_button('Build bei Render.com starten'); ?>
-        </form>
+    public function save_render_api_key() {
+        check_admin_referer('gtrb_save_render_api_key_nonce');
+        if (isset($_POST['render_api_key'])) {
+            update_option($this->render_api_key_option, sanitize_text_field($_POST['render_api_key']));
+        }
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
 
-        <h3>Letzter Build Status:</h3>
-        <p><?php echo esc_html(get_option('gtrb_last_build_status', 'Noch kein Build gestartet.')); ?></p>
-    </div>
-    <?php
+    public function get_github_repos($token) {
+        $response = wp_remote_get('https://api.github.com/user/repos?per_page=100', [
+            'headers' => [
+                'Authorization' => 'token ' . $token,
+                'User-Agent' => 'GTRB Plugin',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $repos = json_decode(wp_remote_retrieve_body($response));
+        if (!is_array($repos)) {
+            return new WP_Error('invalid_response', 'Ungültige API Antwort.');
+        }
+        return $repos;
+    }
+
+    public function get_render_services($api_key) {
+        $response = wp_remote_get('https://api.render.com/v1/services', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $api_key,
+                'Accept' => 'application/json',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $services = json_decode(wp_remote_retrieve_body($response));
+        if (!is_array($services)) {
+            return new WP_Error('invalid_response', 'Ungültige API Antwort von Render.');
+        }
+        return $services;
+    }
 }
 
-// Build via Render API triggern
-function gtrb_trigger_render_build($repo, $api_key) {
-    // Render Service ID aus Repo-URL ableiten oder konfigurieren
-    // Hier als Beispiel statisch - muss angepasst werden!
-    $service_id = 'dein-render-service-id';
+$gtrb_plugin = new GTRB_Plugin();
 
-    $url = "https://api.render.com/deploy/srv-$service_id/webhook";
-
-    $response = wp_remote_post($url, [
-        'headers' => [
-            'Authorization' => "Bearer $api_key",
-            'Content-Type' => 'application/json',
-        ],
-        'body' => json_encode(['repo' => $repo]),
-    ]);
-
-    if (is_wp_error($response)) {
-        return $response;
-    }
-
-    $code = wp_remote_retrieve_response_code($response);
-    if ($code !== 200 && $code !== 201) {
-        return new WP_Error('render_error', "Render API Fehler: HTTP $code");
-    }
-
-    return true;
-}
+add_action('admin_init', [$gtrb_plugin, 'handle_github_oauth_callback']);
