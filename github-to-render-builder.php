@@ -2,7 +2,7 @@
 /*
 Plugin Name: GitHub to Render Builder
 Description: GitHub OAuth + Render.com Integration mit Service-Auswahl im Backend.
-Version: 0.5
+Version: 0.6
 Author: Sven Hajer
 */
 
@@ -68,7 +68,13 @@ class GTRB_Plugin {
                 <p>After login, your GitHub repositories will be displayed.</p>
 
                 <h3>5. Enter Render.com API Key</h3>
-                <p>Enter your Render API key below to fetch your Render services.</p>
+                <p>
+                  To find your Render API Key, log in to your account at  
+                  <a href="https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings" target="_blank" rel="noopener noreferrer">
+                    https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings
+                  </a>.<br>
+                  Then navigate to the <strong>API Keys</strong> section to create or copy your key.
+                </p>
 
                 <h3>6. Select Render Services</h3>
                 <p>Select which Render services to use for build triggers.</p>
@@ -129,13 +135,6 @@ class GTRB_Plugin {
             <hr>
 
             <h2>2. Render.com API Key</h2>
-            <p>
-                To find your Render API Key, log in to your account at 
-                <a href="https://dashboard.render.com/web/api-keys" target="_blank" rel="noopener noreferrer">
-                    https://dashboard.render.com/web/api-keys
-                </a>. 
-                Create a new API key if needed and paste it below.
-            </p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
                 <input type="hidden" name="action" value="gtrb_save_render_api_key" />
