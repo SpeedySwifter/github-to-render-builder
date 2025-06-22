@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: GitHub to Render Builder
-Description: GitHub OAuth + Render.com Integration, auswählbare Repos, Services, Build Trigger & neuer Static Site Service Creator.
+Description: GitHub OAuth + Render.com Integration, auswählbare Repos, Services, Build Trigger & Static Site Service Creator.
 Version: 1.0
 Author: Sven Hajer
 */
@@ -293,23 +293,204 @@ class GTRB_Plugin {
         return $response_body;
     }
 
-    // ... bestehende Methoden für GitHub OAuth, Render Services, Build Trigger etc.
+    public function get_github_oauth_url() {
+        $client_id = get_option('gtrb_github_client_id');
+        $redirect_uri = admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1');
+        $params = [
+            'client_id' => $client_id,
+            'redirect_uri' => $redirect_uri,
+            'scope' => 'repo',
+            'state' => wp_create_nonce('gtrb_github_oauth_state'),
+        ];
+        return 'https://github.com/login/oauth/authorize?' . http_build_query($params);
+    }
 
-    // Hier füge die bereits von dir bekannten Methoden hinzu, z.B.:
-    // - get_github_oauth_url()
-    // - handle_github_oauth_callback()
-    // - github_logout()
-    // - save_render_api_key()
-    // - save_selected_repos()
-    // - save_selected_services()
-    // - trigger_builds_for_selected_services()
-    // - handle_trigger_builds()
-    // - get_github_repos()
-    // - get_render_services()
-    // - render_iframe_shortcode()
-    // Diese Methoden kannst du von deinem bisherigen Code übernehmen.
+    public function handle_github_oauth_callback() {
+        if (!isset($_GET['page']) || $_GET['page'] !== 'gtrb-settings') {
+            return;
+        }
+        if (!isset($_GET['gtrb_github_oauth'])) {
+            return;
+        }
 
+        if (!isset($_GET['code']) || !isset($_GET['state']) || !wp_verify_nonce($_GET['state'], 'gtrb_github_oauth_state')) {
+            wp_die('Invalid OAuth request.');
+        }
+
+        $code = sanitize_text_field($_GET['code']);
+        $client_id = get_option('gtrb_github_client_id');
+        $client_secret = get_option('gtrb_github_client_secret');
+
+        $response = wp_remote_post('https://github.com/login/oauth/access_token', [
+            'headers' => ['Accept' => 'application/json'],
+            'body' => [
+                'client_id' => $client_id,
+                'client_secret' => $client_secret,
+                'code' => $code,
+                'redirect_uri' => admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1'),
+                'state' => $_GET['state'],
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_die('Error fetching token.');
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (isset($body['error'])) {
+            wp_die('GitHub error: ' . esc_html($body['error_description']));
+        }
+
+        if (!isset($body['access_token'])) {
+            wp_die('No access token received.');
+        }
+
+        update_option($this->github_token_option, sanitize_text_field($body['access_token']));
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function github_logout() {
+        check_admin_referer('gtrb_github_logout_nonce');
+        delete_option($this->github_token_option);
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function save_render_api_key() {
+        check_admin_referer('gtrb_save_render_api_key_nonce');
+        if (isset($_POST['render_api_key'])) {
+            update_option($this->render_api_key_option, sanitize_text_field($_POST['render_api_key']));
+        }
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function save_selected_repos() {
+        check_admin_referer('gtrb_save_selected_repos_nonce');
+
+        if (isset($_POST['selected_repos']) && is_array($_POST['selected_repos'])) {
+            $selected = array_map('sanitize_text_field', $_POST['selected_repos']);
+            update_option('gtrb_selected_github_repos', $selected);
+        } else {
+            update_option('gtrb_selected_github_repos', []);
+        }
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function save_selected_services() {
+        check_admin_referer('gtrb_save_selected_services_nonce');
+        if (isset($_POST['selected_services']) && is_array($_POST['selected_services'])) {
+            $selected = array_map('sanitize_text_field', $_POST['selected_services']);
+            update_option('gtrb_selected_render_services', $selected);
+        } else {
+            update_option('gtrb_selected_render_services', []);
+        }
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
+    }
+
+    public function trigger_builds_for_selected_services() {
+        $api_key = get_option($this->render_api_key_option);
+        $selected_services = get_option('gtrb_selected_render_services', []);
+
+        if (!$api_key || empty($selected_services)) {
+            return new WP_Error('missing_data', 'Render API key or selected services missing.');
+        }
+
+        foreach ($selected_services as $service_id) {
+            $response = wp_remote_post("https://api.render.com/v1/services/{$service_id}/deploys", [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => json_encode([]),
+            ]);
+
+            if (is_wp_error($response)) {
+                return $response;
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code !== 201) { // 201 Created = success
+                return new WP_Error('render_api_error', 'Build trigger failed for service ' . $service_id);
+            }
+        }
+
+        return true;
+    }
+
+    public function handle_trigger_builds() {
+        check_admin_referer('gtrb_trigger_builds_nonce');
+
+        $result = $this->trigger_builds_for_selected_services();
+
+        if (is_wp_error($result)) {
+            wp_die('Error triggering builds: ' . $result->get_error_message());
+        }
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings&build_triggered=1'));
+        exit;
+    }
+
+    public function get_github_repos($token) {
+        $response = wp_remote_get('https://api.github.com/user/repos?per_page=100', [
+            'headers' => [
+                'Authorization' => 'token ' . $token,
+                'User-Agent' => 'GTRB Plugin',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $repos = json_decode(wp_remote_retrieve_body($response));
+        if (!is_array($repos)) {
+            return new WP_Error('invalid_response', 'Invalid API response.');
+        }
+        return $repos;
+    }
+
+    public function get_render_services($api_key) {
+        $response = wp_remote_get('https://api.render.com/v1/services', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $api_key,
+                'Accept' => 'application/json',
+            ],
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $services = json_decode(wp_remote_retrieve_body($response));
+        if (!is_array($services)) {
+            return new WP_Error('invalid_response', 'Invalid API response from Render.');
+        }
+        return $services;
+    }
+
+    public function render_iframe_shortcode($atts) {
+        $atts = shortcode_atts([
+            'service_url' => '',
+            'width' => '100%',
+            'height' => '800px',
+        ], $atts, 'render_site');
+
+        if (empty($atts['service_url'])) {
+            return 'Render service URL not specified.';
+        }
+
+        return sprintf(
+            '<iframe src="%s" width="%s" height="%s" style="border:none;"></iframe>',
+            esc_url($atts['service_url']),
+            esc_attr($atts['width']),
+            esc_attr($atts['height'])
+        );
+    }
 }
 
-$gtrb_plugin = new GTRB_Plugin();
-add_action('admin_init', [$gtrb_plugin, 'handle_github_oauth_callback']);
+new GTRB_Plugin();
+add_action('admin_init', [new GTRB_Plugin(), 'handle_github_oauth_callback']);
