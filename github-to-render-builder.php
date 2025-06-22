@@ -1,23 +1,22 @@
 <?php
 /*
 Plugin Name: GitHub to Render Builder
-Description: Verlinkt GitHub Repositories per OAuth und baut sie auf Render.com per API.
-Version: 0.2
+Description: Verlinkt GitHub Repositories per OAuth und baut sie auf Render.com per API. GitHub Client ID & Secret im Backend einstellbar.
+Version: 0.3
 Author: Sven Hajer
 */
 
 if (!defined('ABSPATH')) {
-    exit; // Sicherheit: Direkter Zugriff verboten
+    exit; // Sicherheit: Kein direkter Zugriff
 }
 
 class GTRB_Plugin {
-    private $github_client_id = 'DEINE_GITHUB_CLIENT_ID';
-    private $github_client_secret = 'DEINE_GITHUB_CLIENT_SECRET';
     private $github_token_option = 'gtrb_github_token';
     private $render_api_key_option = 'gtrb_render_api_key';
 
     public function __construct() {
         add_action('admin_menu', [$this, 'add_admin_menu']);
+        add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_post_gtrb_github_logout', [$this, 'github_logout']);
         add_action('admin_post_gtrb_save_render_api_key', [$this, 'save_render_api_key']);
         add_action('admin_init', [$this, 'handle_github_oauth_callback']);
@@ -35,37 +34,67 @@ class GTRB_Plugin {
         );
     }
 
+    public function register_settings() {
+        register_setting('gtrb_settings_group', 'gtrb_github_client_id');
+        register_setting('gtrb_settings_group', 'gtrb_github_client_secret');
+    }
+
     public function render_settings_page() {
         $github_token = get_option($this->github_token_option);
         $render_api_key = get_option($this->render_api_key_option);
+        $client_id = get_option('gtrb_github_client_id');
+        $client_secret = get_option('gtrb_github_client_secret');
         ?>
         <div class="wrap">
             <h1>GitHub & Render.com Integration</h1>
 
-            <h2>1. GitHub Login</h2>
-            <?php if (!$github_token): ?>
-                <?php $auth_url = $this->get_github_oauth_url(); ?>
-                <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Mit GitHub verbinden</a>
-            <?php else: ?>
-                <p><strong>GitHub verbunden.</strong></p>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <?php wp_nonce_field('gtrb_github_logout_nonce'); ?>
-                    <input type="hidden" name="action" value="gtrb_github_logout" />
-                    <input type="submit" value="Abmelden" class="button button-secondary" />
-                </form>
+            <h2>0. GitHub OAuth App Einstellungen</h2>
+            <form method="post" action="options.php">
+                <?php settings_fields('gtrb_settings_group'); ?>
+                <?php do_settings_sections('gtrb_settings_group'); ?>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row">GitHub Client ID</th>
+                        <td><input type="text" name="gtrb_github_client_id" value="<?php echo esc_attr($client_id); ?>" class="regular-text" required /></td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">GitHub Client Secret</th>
+                        <td><input type="password" name="gtrb_github_client_secret" value="<?php echo esc_attr($client_secret); ?>" class="regular-text" required /></td>
+                    </tr>
+                </table>
+                <?php submit_button(); ?>
+            </form>
 
-                <?php
-                $repos = $this->get_github_repos($github_token);
-                if (is_wp_error($repos)) {
-                    echo '<p style="color:red;">Fehler: ' . esc_html($repos->get_error_message()) . '</p>';
-                } else {
-                    echo '<h3>Deine Repositories:</h3><ul>';
-                    foreach ($repos as $repo) {
-                        echo '<li>' . esc_html($repo->full_name) . '</li>';
+            <hr>
+
+            <h2>1. GitHub Login</h2>
+            <?php if (!$client_id || !$client_secret): ?>
+                <p style="color:red;">Bitte gib zuerst Client ID und Client Secret oben ein und speichere.</p>
+            <?php else: ?>
+                <?php if (!$github_token): ?>
+                    <?php $auth_url = $this->get_github_oauth_url(); ?>
+                    <a href="<?php echo esc_url($auth_url); ?>" class="button button-primary">Mit GitHub verbinden</a>
+                <?php else: ?>
+                    <p><strong>GitHub verbunden.</strong></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <?php wp_nonce_field('gtrb_github_logout_nonce'); ?>
+                        <input type="hidden" name="action" value="gtrb_github_logout" />
+                        <input type="submit" value="Abmelden" class="button button-secondary" />
+                    </form>
+
+                    <?php
+                    $repos = $this->get_github_repos($github_token);
+                    if (is_wp_error($repos)) {
+                        echo '<p style="color:red;">Fehler: ' . esc_html($repos->get_error_message()) . '</p>';
+                    } else {
+                        echo '<h3>Deine Repositories:</h3><ul>';
+                        foreach ($repos as $repo) {
+                            echo '<li>' . esc_html($repo->full_name) . '</li>';
+                        }
+                        echo '</ul>';
                     }
-                    echo '</ul>';
-                }
-                ?>
+                    ?>
+                <?php endif; ?>
             <?php endif; ?>
 
             <hr>
@@ -99,9 +128,10 @@ class GTRB_Plugin {
     }
 
     public function get_github_oauth_url() {
+        $client_id = get_option('gtrb_github_client_id');
         $redirect_uri = admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1');
         $params = [
-            'client_id' => $this->github_client_id,
+            'client_id' => $client_id,
             'redirect_uri' => $redirect_uri,
             'scope' => 'repo',
             'state' => wp_create_nonce('gtrb_github_oauth_state'),
@@ -122,12 +152,14 @@ class GTRB_Plugin {
         }
 
         $code = sanitize_text_field($_GET['code']);
+        $client_id = get_option('gtrb_github_client_id');
+        $client_secret = get_option('gtrb_github_client_secret');
 
         $response = wp_remote_post('https://github.com/login/oauth/access_token', [
             'headers' => ['Accept' => 'application/json'],
             'body' => [
-                'client_id' => $this->github_client_id,
-                'client_secret' => $this->github_client_secret,
+                'client_id' => $client_id,
+                'client_secret' => $client_secret,
                 'code' => $code,
                 'redirect_uri' => admin_url('admin.php?page=gtrb-settings&gtrb_github_oauth=1'),
                 'state' => $_GET['state'],
@@ -205,6 +237,5 @@ class GTRB_Plugin {
     }
 }
 
-// Plugin instanziieren und OAuth Callback registrieren
 $gtrb_plugin = new GTRB_Plugin();
 add_action('admin_init', [$gtrb_plugin, 'handle_github_oauth_callback']);
