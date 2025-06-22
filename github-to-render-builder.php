@@ -1,13 +1,13 @@
 <?php
 /*
 Plugin Name: GitHub to Render Builder
-Description: GitHub OAuth + Render.com Integration mit Service-Auswahl im Backend.
-Version: 0.6
+Description: GitHub OAuth + Render.com Integration mit auswählbaren Repositories und Services.
+Version: 0.7
 Author: Sven Hajer
 */
 
 if (!defined('ABSPATH')) {
-    exit; // kein direkter Zugriff
+    exit;
 }
 
 class GTRB_Plugin {
@@ -20,6 +20,7 @@ class GTRB_Plugin {
         add_action('admin_post_gtrb_github_logout', [$this, 'github_logout']);
         add_action('admin_post_gtrb_save_render_api_key', [$this, 'save_render_api_key']);
         add_action('admin_post_gtrb_save_selected_services', [$this, 'save_selected_services']);
+        add_action('admin_post_gtrb_save_selected_repos', [$this, 'save_selected_repos']);
         add_action('admin_init', [$this, 'handle_github_oauth_callback']);
     }
 
@@ -44,6 +45,7 @@ class GTRB_Plugin {
         $github_token = get_option($this->github_token_option);
         $render_api_key = get_option($this->render_api_key_option);
         $selected_services = get_option('gtrb_selected_render_services', []);
+        $selected_repos = get_option('gtrb_selected_github_repos', []);
         $client_id = get_option('gtrb_github_client_id');
         $client_secret = get_option('gtrb_github_client_secret');
         ?>
@@ -52,6 +54,7 @@ class GTRB_Plugin {
 
             <h2>Getting Started: How to use this plugin</h2>
             <div style="background:#f1f1f1;padding:15px;margin-bottom:30px;border-left:4px solid #0073aa;">
+                <!-- Tutorial text as before -->
                 <h3>1. Create a GitHub OAuth App</h3>
                 <p>Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener noreferrer">GitHub Developer Settings</a> and create a new OAuth App.<br>
                 Set the Redirect URL to:<br>
@@ -64,8 +67,8 @@ class GTRB_Plugin {
                 <h3>3. Connect to GitHub</h3>
                 <p>Click the <strong>Connect with GitHub</strong> button to log in and authorize access.</p>
 
-                <h3>4. View Your Repositories</h3>
-                <p>After login, your GitHub repositories will be displayed.</p>
+                <h3>4. Select GitHub Repositories</h3>
+                <p>Select which repositories you want to build on Render.com.</p>
 
                 <h3>5. Enter Render.com API Key</h3>
                 <p>
@@ -122,11 +125,26 @@ class GTRB_Plugin {
                     if (is_wp_error($repos)) {
                         echo '<p style="color:red;">Error: ' . esc_html($repos->get_error_message()) . '</p>';
                     } else {
-                        echo '<h3>Your Repositories:</h3><ul>';
-                        foreach ($repos as $repo) {
-                            echo '<li>' . esc_html($repo->full_name) . '</li>';
-                        }
-                        echo '</ul>';
+                        ?>
+                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                            <?php wp_nonce_field('gtrb_save_selected_repos_nonce'); ?>
+                            <input type="hidden" name="action" value="gtrb_save_selected_repos" />
+                            <h3>Select GitHub Repositories to build:</h3>
+                            <ul style="list-style:none;padding-left:0;">
+                                <?php foreach ($repos as $repo):
+                                    $checked = in_array($repo->full_name, $selected_repos) ? 'checked' : '';
+                                ?>
+                                <li>
+                                    <label>
+                                        <input type="checkbox" name="selected_repos[]" value="<?php echo esc_attr($repo->full_name); ?>" <?php echo $checked; ?> />
+                                        <?php echo esc_html($repo->full_name); ?>
+                                    </label>
+                                </li>
+                                <?php endforeach; ?>
+                            </ul>
+                            <input type="submit" class="button button-primary" value="Save Selected Repositories" />
+                        </form>
+                        <?php
                     }
                     ?>
                 <?php endif; ?>
@@ -135,6 +153,13 @@ class GTRB_Plugin {
             <hr>
 
             <h2>2. Render.com API Key</h2>
+            <p>
+              To find your Render API Key, log in to your account at  
+              <a href="https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings" target="_blank" rel="noopener noreferrer">
+                https://dashboard.render.com/u/usr-d1ajhmqdbo4c73cict0g/settings
+              </a>.<br>
+              Then navigate to the <strong>API Keys</strong> section to create or copy your key.
+            </p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
                 <input type="hidden" name="action" value="gtrb_save_render_api_key" />
@@ -175,6 +200,20 @@ class GTRB_Plugin {
 
         </div>
         <?php
+    }
+
+    public function save_selected_repos() {
+        check_admin_referer('gtrb_save_selected_repos_nonce');
+
+        if (isset($_POST['selected_repos']) && is_array($_POST['selected_repos'])) {
+            $selected = array_map('sanitize_text_field', $_POST['selected_repos']);
+            update_option('gtrb_selected_github_repos', $selected);
+        } else {
+            update_option('gtrb_selected_github_repos', []);
+        }
+
+        wp_redirect(admin_url('admin.php?page=gtrb-settings'));
+        exit;
     }
 
     public function save_selected_services() {
