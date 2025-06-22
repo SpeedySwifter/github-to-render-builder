@@ -2,7 +2,7 @@
 /*
 Plugin Name: GitHub to Render Builder
 Description: GitHub OAuth + Render.com Integration mit Service-Auswahl im Backend.
-Version: 0.4
+Version: 0.5
 Author: Sven Hajer
 */
 
@@ -52,7 +52,6 @@ class GTRB_Plugin {
 
             <h2>Getting Started: How to use this plugin</h2>
             <div style="background:#f1f1f1;padding:15px;margin-bottom:30px;border-left:4px solid #0073aa;">
-                <!-- Tutorial text here (same as before) -->
                 <h3>1. Create a GitHub OAuth App</h3>
                 <p>Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener noreferrer">GitHub Developer Settings</a> and create a new OAuth App.<br>
                 Set the Redirect URL to:<br>
@@ -130,6 +129,13 @@ class GTRB_Plugin {
             <hr>
 
             <h2>2. Render.com API Key</h2>
+            <p>
+                To find your Render API Key, log in to your account at 
+                <a href="https://dashboard.render.com/web/api-keys" target="_blank" rel="noopener noreferrer">
+                    https://dashboard.render.com/web/api-keys
+                </a>. 
+                Create a new API key if needed and paste it below.
+            </p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('gtrb_save_render_api_key_nonce'); ?>
                 <input type="hidden" name="action" value="gtrb_save_render_api_key" />
